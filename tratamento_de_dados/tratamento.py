@@ -5,10 +5,12 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+
 try:
     from tqdm import tqdm
     tem_tqdm = True
 except ImportError:
+    tqdm = None
     tem_tqdm = False
 
 nome_arquivo_json = "registros_medicos.json"
@@ -80,6 +82,22 @@ def extrair_info(registro):
     }
 
 
+def resolver_data(reg, data_por_atendimento):
+    """Tenta achar a data do registro em ordem de confiança: a própria
+    dataEntrada, a do atendimento vinculado (mesmo atendimentoId), ou
+    a dataCadastro. Devolve (data, origem)."""
+    data = extrair_data(reg.get("dataEntrada"))
+    if data:
+        return data, "original"
+
+    atendimento_id = (reg.get("informacoes") or {}).get("atendimentoId")
+    if atendimento_id in data_por_atendimento:
+        return data_por_atendimento[atendimento_id], "atendimento_vinculado"
+
+    data = extrair_data(reg.get("dataCadastro"))
+    return (data, "data_cadastro") if data else (None, "ausente")
+
+
 def tratar_dados():
     print(f"\nLendo o arquivo: '{caminho_json}'")
     with open(caminho_json, "r", encoding="utf-8") as f:
@@ -87,12 +105,25 @@ def tratar_dados():
     print(f"[Pacientes encontrados: {len(pacientes)} ]\n")
 
     linhas = []
-    for paciente in (tqdm(pacientes, desc="Processando") if tem_tqdm else pacientes): # type: ignore
+    for paciente in (tqdm(pacientes, desc="Processando") if tem_tqdm else pacientes):
         id_paciente = anonimizar_cpf(paciente.get("cpf"))
         nascimento = extrair_data(paciente.get("dataNascimento"))
+        registros = paciente.get("registros") or []
 
-        for reg in paciente.get("registros") or []:
-            data_entrada = extrair_data(reg.get("dataEntrada"))
+        # 1a passada: mapeia atendimentoId -> data, usando os registros
+        # que tem data de verdade (normalmente so o ATENDIMENTO tem)
+        data_por_atendimento = {}
+        for reg in registros:
+            data = extrair_data(reg.get("dataEntrada"))
+            if data:
+                atendimento_id = (reg.get("informacoes") or {}).get("atendimentoId")
+                if atendimento_id is not None and atendimento_id not in data_por_atendimento:
+                    data_por_atendimento[atendimento_id] = data
+
+        # 2a passada: monta as linhas, preenchendo a data que falta
+        # (ex: MEDICAMENTO sem dataEntrada própria) quando possível
+        for reg in registros:
+            data_entrada, origem_data = resolver_data(reg, data_por_atendimento)
             idade = calcular_idade(nascimento, data_entrada)
 
             linha = {
@@ -105,6 +136,7 @@ def tratar_dados():
                 "tipo_registro": reg.get("tipo"),
                 "servico": padronizar(reg.get("servico")),
                 "data_entrada": data_entrada,
+                "origem_data": origem_data,
                 "ano": data_entrada.year if data_entrada else None,
                 "mes": data_entrada.month if data_entrada else None,
             }
@@ -123,6 +155,6 @@ if __name__ == "__main__":
     tabela.to_csv(caminho_saida_csv, index=False, encoding="utf-8-sig")
     print(f"[Quantidade real de pacientes: {tabela['paciente_id'].nunique()}]")
 
-    titulo = "Mostruário da Tabela"
+    titulo = "Mostruário da tabela"
     print(f"\n{titulo}\n{'=' * len(titulo)}")
     print(tabela.head(3).T)
