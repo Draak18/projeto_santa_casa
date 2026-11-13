@@ -17,20 +17,19 @@ st.set_page_config(page_title="Dashboard Santa Casa", layout="wide", page_icon="
 # cor de fundo dos "cartões" (cards) - mesma do secondaryBackgroundColor
 # do config.toml, usada tanto no CSS quanto no fundo dos gráficos, pra
 # o gráfico parecer parte do cartão e não ficar com fundo preto puro
-cor_cartao = "#1A1B23"
+cor_cartao = "#111C2E"
 
-# paleta roxa, igual à referência, com cores de apoio pra gráficos
-# com mais de uma categoria (ex: sexo)
-paleta_cores = ["#8B5CF6", "#A78BFA", "#C4B5FD", "#6D28D9", "#DDD6FE", "#5B21B6", "#EDE9FE"]
-px.defaults.color_discrete_sequence = paleta_cores
-px.defaults.template = "plotly_dark"
+# paleta azul-marinho, com tons de azul para diferenciar categorias
+paleta_cores = ["#3B82F6", "#60A5FA", "#93C5FD", "#1D4ED8", "#BFDBFE", "#2563EB", "#DBEAFE"]
+px.defaults.color_discrete_sequence = paleta_cores  # type: ignore[assignment]
+px.defaults.template = "plotly_dark"  # type: ignore[assignment]
 
 
 def estilizar(fig):
     """Aplica o visual padrão (fundo de cartão, fonte, margens)."""
     fig.update_layout(
         paper_bgcolor=cor_cartao, plot_bgcolor=cor_cartao,
-        font_color="#E5E7EB", margin=dict(l=10, r=10, t=30, b=10),
+        font_color="#E2EAF6", margin=dict(l=10, r=10, t=30, b=10),
     )
     return fig
 
@@ -40,9 +39,13 @@ def grafico_ranking(valores, rotulo, top=15):
     coluna - usado por bairro, CID e medicamentos (mesmo formato)."""
     contagem = valores.value_counts().head(top).reset_index()
     contagem.columns = [rotulo, "quantidade"]
-    fig = px.bar(contagem, x="quantidade", y=rotulo, orientation="h")
-    fig.update_traces(marker_color=paleta_cores[0])
-    fig.update_layout(yaxis={"categoryorder": "total ascending"}, xaxis_title="Quantidade de registros", yaxis_title=rotulo)
+    rotulos = {rotulo: rotulo, "quantidade": "Quantidade de Registros"}
+    fig = px.bar(contagem, x="quantidade", y=rotulo, orientation="h", labels=rotulos)
+    fig.update_traces(
+        marker_color=paleta_cores[0],
+        hovertemplate=f"{rotulo} = %{{y}}<br>Quantidade de Registros = %{{x}}<extra></extra>",
+    )
+    fig.update_layout(yaxis={"categoryorder": "total ascending"})
     return estilizar(fig)
 
 
@@ -59,8 +62,8 @@ st.markdown(
 
         div[data-testid="stMetric"] {{
             background-color: {cor_cartao};
-            border: 1px solid #2A2B36;
-            border-top: 3px solid #8B5CF6;
+            border: 1px solid #26364F;
+            border-top: 3px solid #3B82F6;
             border-radius: 16px;
             padding: 18px 20px;
         }}
@@ -69,22 +72,22 @@ st.markdown(
         }}
 
         /* título de cada grupo de filtro na barra lateral: destacado,
-        com uma barrinha roxa do lado, pra separar visualmente */
+        com uma barrinha azul do lado, pra separar visualmente */
         .titulo-filtro {{
             font-weight: 700;
             text-transform: uppercase;
             font-size: 0.72rem;
             letter-spacing: 0.06em;
-            color: #A78BFA;
-            border-left: 3px solid #8B5CF6;
+            color: #93C5FD;
+            border-left: 3px solid #3B82F6;
             padding-left: 10px;
             margin: 18px 0 6px 0;
         }}
 
-        /* divisórias (st.divider) na cor roxa do tema, com menos espaço
+        /* divisórias (st.divider) na cor azul do tema, com menos espaço
         em volta (o padrão do streamlit é bem espaçado) */
         div[data-testid="stSidebar"] hr {{
-            border-color: #8B5CF6 !important;
+            border-color: #3B82F6 !important;
             opacity: 0.3;
             margin: 6px 0 !important;
         }}
@@ -98,10 +101,6 @@ st.markdown(
             margin-top: 4px;
         }}
 
-        /* textos de apoio (st.caption) em itálico */
-        [data-testid="stCaptionContainer"] {{
-            font-style: italic;
-        }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -110,10 +109,12 @@ st.markdown(
 pasta_do_script = os.path.dirname(os.path.abspath(__file__))
 caminho_csv = os.path.join(pasta_do_script, "..", "tratamento_de_dados", "registros_medicos_tratados.csv")
 
-# ano usado só pra destacar (não pra excluir) datas fora do comum
-ano_tipico_inicio = 2000
+# ano que o filtro de período abre selecionado (o campo "Ano Inicial"
+# ainda permite digitar qualquer ano que exista de verdade na base,
+# mesmo mais antigo que este)
+ano_inicial_padrao = 2000
 
-ordem_faixas = ["0-4", "5-11", "12-17", "18-29", "30-44", "45-59", "60-74", "75+", "NAO INFORMADO"]
+ordem_faixas = ["0-4", "5-11", "12-17", "18-29", "30-44", "45-59", "60-74", "75+", "Não Informado"]
 
 # palavras comuns em queixas que não ajudam a identificar o assunto
 # (verbos/conectivos típicos de anotação médica, não sintomas em si)
@@ -163,14 +164,13 @@ def carregar_dados():
 
 tabela = carregar_dados()
 
-# dois tipos diferentes de "problema" na data:
-# - atípica: tem data válida, mas fora da faixa típica (ex: ano 840)
-# - ausente: não tem data nenhuma, ou o formato não foi reconhecido (NaT)
-qtd_datas_atipicas = int((tabela["data_entrada"] < pd.Timestamp(f"{ano_tipico_inicio}-01-01")).sum())
+# registros sem data nenhuma (NaT) - o campo não existia ou não foi
+# reconhecido, diferente de uma data só "fora do normal" tipo ano 840
 qtd_datas_ausentes = int(tabela["data_entrada"].isna().sum())
+qtd_datas_antigas = int((tabela["data_entrada"] < pd.Timestamp(f"{ano_inicial_padrao}-01-01")).sum())
 
 st.title("Dashboard de Atendimentos — Santa Casa")
-st.caption("Monitoramento de indicadores de atendimento para apoio à gestão hospitalar")
+st.caption("Monitoramento de Indicadores de Atendimento para Apoio à Gestão Hospitalar")
 
 # ----------------------------------------------------------------------
 # FILTROS (barra lateral) - afetam qualquer gráfico escolhido
@@ -179,30 +179,33 @@ st.sidebar.markdown('<div class="titulo-filtros-principal">Filtros</div>', unsaf
 st.sidebar.divider()
 
 # seletores de ano/mês escritos por nós (em vez do calendário nativo
-# do streamlit) - assim controlamos o idioma, a capitalização e não
-# ficamos reféns da navegação travada do componente pronto.
-limite_inferior = max(tabela["data_entrada"].min(), pd.Timestamp(f"{ano_tipico_inicio}-01-01"))
-limite_superior = min(tabela["data_entrada"].max(), pd.Timestamp.now())
-if limite_inferior > limite_superior:  # caso raro: toda a base é atípica
-    limite_inferior, limite_superior = tabela["data_entrada"].min(), tabela["data_entrada"].max()
-
-anos_disponiveis = list(range(limite_inferior.year, limite_superior.year + 1))
+# do streamlit) - assim controlamos o idioma e a capitalização. O ano
+# usa um campo numérico (em vez de lista suspensa) pra permitir digitar
+# qualquer ano direto, incluindo os anos "atípicos" tipo 840, sem precisar
+# rolar uma lista enorme - digitar é mais rápido que navegar 1000+ anos.
+ano_minimo_possivel = tabela["data_entrada"].min().year
+ano_maximo_possivel = min(tabela["data_entrada"].max(), pd.Timestamp.now()).year
+ano_padrao_inicio = max(ano_minimo_possivel, ano_inicial_padrao)
 
 st.sidebar.markdown('<div class="titulo-filtro">Período</div>', unsafe_allow_html=True)
 col_ano_ini, col_mes_ini = st.sidebar.columns(2)
-ano_inicio = col_ano_ini.selectbox("Ano inicial", anos_disponiveis, index=0)
-mes_inicio = col_mes_ini.selectbox("Mês inicial", meses_pt, index=0)
+ano_inicio = col_ano_ini.number_input(
+    "Ano Inicial", min_value=ano_minimo_possivel, max_value=ano_maximo_possivel, value=ano_padrao_inicio, step=1
+)
+mes_inicio = col_mes_ini.selectbox("Mês Inicial", meses_pt, index=0)
 
 col_ano_fim, col_mes_fim = st.sidebar.columns(2)
-ano_fim = col_ano_fim.selectbox("Ano final", anos_disponiveis, index=len(anos_disponiveis) - 1)
-mes_fim = col_mes_fim.selectbox("Mês final", meses_pt, index=11)
+ano_fim = col_ano_fim.number_input(
+    "Ano Final", min_value=ano_minimo_possivel, max_value=ano_maximo_possivel, value=ano_maximo_possivel, step=1
+)
+mes_fim = col_mes_fim.selectbox("Mês Final", meses_pt, index=11)
 
 data_inicio = date(ano_inicio, meses_pt.index(mes_inicio) + 1, 1)
 ultimo_dia_mes_fim = calendar.monthrange(ano_fim, meses_pt.index(mes_fim) + 1)[1]
 data_fim = date(ano_fim, meses_pt.index(mes_fim) + 1, ultimo_dia_mes_fim)
 
 if data_inicio > data_fim:
-    st.sidebar.error("O período inicial é depois do final — ajuste as datas.")
+    st.sidebar.error("O Período Inicial é Posterior ao Final — Ajuste as Datas.")
     data_inicio, data_fim = data_fim, data_inicio
 
 # bairro/tipo com valor em branco viram uma categoria explícita
@@ -214,7 +217,7 @@ tipo_tratado = tabela["tipo_registro"].fillna("(Não informado)")
 # filtro de bairro, com "Todos" integrado (sem botão separado)
 st.sidebar.markdown('<div class="titulo-filtro">Localização</div>', unsafe_allow_html=True)
 bairros = sorted(bairro_tratado.unique())
-todos_os_bairros = st.sidebar.checkbox("Todos os bairros", value=True)
+todos_os_bairros = st.sidebar.checkbox("Todos os Bairros", value=True)
 if todos_os_bairros:
     bairros_selecionados = bairros
 else:
@@ -222,13 +225,13 @@ else:
 
 st.sidebar.markdown('<div class="titulo-filtro">Tipo de registro</div>', unsafe_allow_html=True)
 tipos = sorted(tipo_tratado.unique())
-tipos_selecionados = st.sidebar.multiselect("Tipo de registro", tipos, default=tipos, label_visibility="collapsed")
+tipos_selecionados = st.sidebar.multiselect("Tipo de Registro", tipos, default=tipos, label_visibility="collapsed")
 
 # registros sem data (NaT) não têm como "estar dentro" de um período -
 # aqui a pessoa decide se eles entram ou não no filtro, em vez de ficarem
 # invisivelmente de fora (ou sempre dentro) sem ela saber
 incluir_sem_data = st.sidebar.checkbox(
-    f"Incluir {qtd_datas_ausentes} registro(s) sem data reconhecida", value=True
+    f"Incluir {qtd_datas_ausentes} Registro(s) sem Data Reconhecida", value=True
 )
 
 # datas atípicas (ex: ano 840) e as dentro do intervalo típico
@@ -242,47 +245,47 @@ filtrada = tabela[
     & (tipo_tratado.isin(tipos_selecionados))
 ]
 
-st.sidebar.markdown(f"**{len(filtrada)}** registros após o filtro (de {len(tabela)} no total)")
+st.sidebar.markdown(f"**{len(filtrada)}** Registros Após o Filtro (de {len(tabela)} no total)")
 
-if qtd_datas_atipicas > 0:
-    st.sidebar.divider()
+if qtd_datas_antigas > 0:
     st.sidebar.caption(
-        f"{qtd_datas_atipicas} registro(s) têm data anterior a {ano_tipico_inicio} e por isso "
-        f"ficam fora do filtro acima (o seletor de ano começa em {ano_tipico_inicio})."
+        f"{qtd_datas_antigas} registro(s) têm data anterior a {ano_inicial_padrao} e por isso "
+        f'ficam fora do período inicial. Ajuste "Ano Inicial" acima pra incluí-los '
+        f"(mínimo permitido: {ano_minimo_possivel})."
     )
 
 # ----------------------------------------------------------------------
 # CARTÕES DE INDICADORES (resumo rápido dos dados filtrados)
 # ----------------------------------------------------------------------
 if not filtrada.empty:
-    bairro_top = filtrada["bairro"].value_counts().idxmax() if filtrada["bairro"].notna().any() else "—"
+    bairro_top = str(filtrada["bairro"].value_counts().idxmax()) if filtrada["bairro"].notna().any() else "—"
     idade_media = filtrada["idade"].mean()
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Registros no filtro", f"{len(filtrada):,}".replace(",", "."))
-    col2.metric("Pacientes únicos", f"{filtrada['paciente_id'].nunique():,}".replace(",", "."))
-    col3.metric("Idade média", f"{idade_media:.0f} anos" if pd.notna(idade_media) else "—")
-    col4.metric("Bairro mais comum", bairro_top)
+    col1.metric("Registros no Filtro", f"{len(filtrada):,}".replace(",", "."))
+    col2.metric("Pacientes Únicos", f"{filtrada['paciente_id'].nunique():,}".replace(",", "."))
+    col3.metric("Idade Média", f"{idade_media:.0f} anos" if pd.notna(idade_media) else "—")
+    col4.metric("Bairro Mais Comum", bairro_top)
     st.divider()
 
 # ----------------------------------------------------------------------
 # SELETOR DE VISUALIZAÇÃO
 # ----------------------------------------------------------------------
 visualizacao = st.selectbox(
-    "Escolha a visualização",
+    "Escolha a Visualização",
     [
-        "Volume de atendimentos por período",
-        "Distribuição por sexo e faixa etária",
-        "Atendimentos por bairro",
-        "Tipos de atendimento",
-        "Diagnósticos mais frequentes (CID)",
-        "Medicamentos mais usados",
-        "Nuvem de palavras das queixas",
+        "Volume de Atendimentos por Período",
+        "Distribuição por Sexo e Faixa Etária",
+        "Atendimentos por Bairro",
+        "Tipos de Atendimento",
+        "Diagnósticos Mais Frequentes (CID)",
+        "Medicamentos Mais Usados",
+        "Nuvem de Palavras das Queixas",
     ],
 )
 
 if filtrada.empty:
-    st.warning("Nenhum registro encontrado com esses filtros.")
+    st.warning("Nenhum Registro Encontrado com Esses Filtros.")
     st.stop()
 
 
@@ -291,9 +294,9 @@ cartao = st.container(border=True)
 # ----------------------------------------------------------------------
 # 1. VOLUME POR PERÍODO
 # ----------------------------------------------------------------------
-if visualizacao == "Volume de atendimentos por período":
+if visualizacao == "Volume de Atendimentos por Período":
     with cartao:
-        st.subheader("Volume de atendimentos por mês")
+        st.subheader("Volume de Atendimentos por Mês")
 
         por_mes = (
             filtrada.groupby(filtrada["data_entrada"].dt.to_period("M"))
@@ -302,61 +305,80 @@ if visualizacao == "Volume de atendimentos por período":
         )
         por_mes["data_entrada"] = por_mes["data_entrada"].astype(str)
 
-        fig = px.line(por_mes, x="data_entrada", y="quantidade", markers=True)
-        fig.update_traces(line_color=paleta_cores[0], marker_color=paleta_cores[0])
-        fig.update_layout(xaxis_title="Mês", yaxis_title="Quantidade de registros")
+        rotulos = {"data_entrada": "Mês", "quantidade": "Quantidade de Registros"}
+        fig = px.line(por_mes, x="data_entrada", y="quantidade", markers=True, labels=rotulos)
+        fig.update_traces(
+            line_color=paleta_cores[0],
+            marker_color=paleta_cores[0],
+            hovertemplate="Mês = %{x}<br>Quantidade de Registros = %{y}<extra></extra>",
+        )
         st.plotly_chart(estilizar(fig), use_container_width=True)
 
 
 # ----------------------------------------------------------------------
 # 2. SEXO E FAIXA ETÁRIA
 # ----------------------------------------------------------------------
-elif visualizacao == "Distribuição por sexo e faixa etária":
+elif visualizacao == "Distribuição por Sexo e Faixa Etária":
     with cartao:
-        st.subheader("Distribuição de pacientes por sexo e faixa etária")
+        st.subheader("Distribuição de Pacientes por Sexo e Faixa Etária")
 
         contagem = filtrada.groupby(["faixa_etaria", "sexo"]).size().reset_index(name="quantidade")
         contagem["faixa_etaria"] = pd.Categorical(contagem["faixa_etaria"], categories=ordem_faixas, ordered=True)
         contagem = contagem.sort_values("faixa_etaria")
 
-        fig = px.bar(contagem, x="faixa_etaria", y="quantidade", color="sexo", barmode="group")
-        fig.update_layout(xaxis_title="Faixa etária", yaxis_title="Quantidade de registros")
+        rotulos = {"faixa_etaria": "Faixa Etária", "quantidade": "Quantidade de Registros", "sexo": "Sexo"}
+        fig = px.bar(contagem, x="faixa_etaria", y="quantidade", color="sexo", barmode="group", labels=rotulos)
+        fig.update_traces(
+            hovertemplate=(
+                "Faixa Etária = %{x}<br>"
+                "Quantidade de Registros = %{y}<br>"
+                "Sexo = %{fullData.name}<extra></extra>"
+            )
+        )
         st.plotly_chart(estilizar(fig), use_container_width=True)
 
 
 # ----------------------------------------------------------------------
 # 3. BAIRRO
 # ----------------------------------------------------------------------
-elif visualizacao == "Atendimentos por bairro":
+elif visualizacao == "Atendimentos por Bairro":
     with cartao:
-        st.subheader("Top 15 bairros por quantidade de atendimentos")
+        st.subheader("15 Bairros com Mais Atendimentos")
         st.plotly_chart(grafico_ranking(filtrada["bairro"], "Bairro"), use_container_width=True)
 
 
 # ----------------------------------------------------------------------
 # 4. TIPOS DE ATENDIMENTO
 # ----------------------------------------------------------------------
-elif visualizacao == "Tipos de atendimento":
+elif visualizacao == "Tipos de Atendimento":
     with cartao:
-        st.subheader("Distribuição por tipo de registro")
+        st.subheader("Distribuição por Tipo de Registro")
 
         contagem = filtrada["tipo_registro"].value_counts().reset_index()
         contagem.columns = ["tipo_registro", "quantidade"]
 
-        fig = px.pie(contagem, names="tipo_registro", values="quantidade", hole=0.55)
+        rotulos = {"tipo_registro": "Tipo de Registro", "quantidade": "Quantidade de Registros"}
+        fig = px.pie(contagem, names="tipo_registro", values="quantidade", hole=0.55, labels=rotulos)
+        fig.update_traces(
+            hovertemplate=(
+                "Tipo de Registro = %{label}<br>"
+                "Quantidade de Registros = %{value}<br>"
+                "Participação = %{percent}<extra></extra>"
+            )
+        )
         st.plotly_chart(estilizar(fig), use_container_width=True)
 
 
 # ----------------------------------------------------------------------
 # 5. DIAGNÓSTICOS (CID)
 # ----------------------------------------------------------------------
-elif visualizacao == "Diagnósticos mais frequentes (CID)":
+elif visualizacao == "Diagnósticos Mais Frequentes (CID)":
     with cartao:
-        st.subheader("Top 15 diagnósticos (CID) mais frequentes")
+        st.subheader("15 Diagnósticos (CID) Mais Frequentes")
 
         diagnosticados = filtrada["cid_descricao"].dropna()
         if diagnosticados.empty:
-            st.info("Nenhum diagnóstico (CID) registrado com esses filtros.")
+            st.info("Nenhum Diagnóstico (CID) Registrado com Esses Filtros.")
         else:
             st.plotly_chart(grafico_ranking(diagnosticados, "Diagnóstico"), use_container_width=True)
 
@@ -364,13 +386,13 @@ elif visualizacao == "Diagnósticos mais frequentes (CID)":
 # ----------------------------------------------------------------------
 # 6. MEDICAMENTOS
 # ----------------------------------------------------------------------
-elif visualizacao == "Medicamentos mais usados":
+elif visualizacao == "Medicamentos Mais Usados":
     with cartao:
-        st.subheader("Top 15 medicamentos mais usados")
+        st.subheader("15 Medicamentos Mais Usados")
 
         medicados = filtrada["medicamento_nome"].dropna()
         if medicados.empty:
-            st.info("Nenhum medicamento registrado com esses filtros.")
+            st.info("Nenhum Medicamento Registrado com Esses Filtros.")
         else:
             st.plotly_chart(grafico_ranking(medicados, "Medicamento"), use_container_width=True)
 
@@ -378,19 +400,19 @@ elif visualizacao == "Medicamentos mais usados":
 # ----------------------------------------------------------------------
 # 7. NUVEM DE PALAVRAS (QUEIXAS)
 # ----------------------------------------------------------------------
-elif visualizacao == "Nuvem de palavras das queixas":
+elif visualizacao == "Nuvem de Palavras das Queixas":
     with cartao:
-        st.subheader("Nuvem de palavras das queixas")
+        st.subheader("Nuvem de Palavras das Queixas")
 
         try:
             from wordcloud import WordCloud, STOPWORDS
             import matplotlib.pyplot as plt
         except ImportError:
-            st.error("Faltam bibliotecas para esse gráfico. Rode: pip install wordcloud matplotlib")
+            st.error("Faltam Bibliotecas para Este Gráfico. Execute: pip install wordcloud matplotlib")
             st.stop()
 
         incluir_vitais = st.checkbox(
-            "Incluir siglas de sinais vitais (PA, FC, SAT, SPO2...) na nuvem", value=False
+            "Incluir Siglas de Sinais Vitais (PA, FC, SAT, SPO2...) na Nuvem", value=False
         )
         st.caption(
             "Por padrão, siglas de sinais vitais (PA, FC, SAT, SPO2, BPM, MMHG e seus números) "
@@ -409,13 +431,13 @@ elif visualizacao == "Nuvem de palavras das queixas":
             todas_stopwords = STOPWORDS.union(stopwords_pt).union(siglas_vitais)
 
         if not texto.strip():
-            st.info("Nenhuma queixa registrada com esses filtros.")
+            st.info("Nenhuma Queixa Registrada com Esses Filtros.")
         else:
             nuvem = WordCloud(
                 width=1200,
                 height=600,
                 background_color=cor_cartao,
-                colormap="Purples",
+                colormap="Blues",
                 stopwords=todas_stopwords,
                 max_words=60,
                 prefer_horizontal=0.95,
